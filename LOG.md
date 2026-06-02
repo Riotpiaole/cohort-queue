@@ -4,6 +4,47 @@ Newest entries on top. Format per ~/.claude/prompts/SOFTWARE_DEV.md.
 
 ---
 
+[2026-06-02 14:40] | Integrated the frontend with the real coordinator IN-CLUSTER: Express now reverse-proxies /api/* to the coordinator; both frontend + coordinator run as k8s images. No host port-forward.
+VERIFIED:
+  # backend: new read-only endpoint so the UI loads without wiping the queue
+  cd backend && go build ./... && go vet ./...     # added GET /api/state (reuses writeState)
+  docker build --build-arg VERSION=1.0.0 -t cohort-coordinator:v1.0.0 . && minikube image load cohort-coordinator:v1.0.0
+  kubectl apply -f deploy/k8s/ && kubectl rollout restart deploy/cohort-coordinator
+  # frontend image (Express proxy) built from repo ROOT:
+  cd .. && docker build -t cohort-frontend:v1.0.0 . && minikube image load cohort-frontend:v1.0.0
+  kubectl apply -f backend/deploy/k8s/ && kubectl rollout status deploy/cohort-frontend
+  # open the UI (NodePort, no kubectl port-forward):
+  minikube service cohort-frontend --url           # -> http://127.0.0.1:<port> (keep running)
+  curl -s        $URL/api/state                                                         # {capacity,cohorts,inFlight,total,totalAdded}
+  curl -s -XPOST $URL/api/add -H 'content-type: application/json' -d '{"n":22}'         # -> [2,10,10]
+RESULTS:
+  - Chain works: browser -> cohort-frontend (NodePort 30030) -> Express /api proxy ->
+    cohort-coordinator-http:8080 (in-cluster DNS) -> coordinator pod; workers consume via gRPC.
+  - GET /api/state proxied correctly; Add 22 -> [2,10,10]; in-cluster worker drained it to 0.
+  - Frontend pod logs show api.proxy.{state,create,add}.latency_ms — proxy is instrumented.
+  - All 3 deployments 1/1 Ready, 0 restarts.
+CHANGES:
+  - backend/internal/coordinator/coordinator.go: + GET /api/state (read-only, no mutation).
+  - src/server.ts: removed the 4 static-demo endpoints + demo-state import; now app.all("/api/*")
+    forwards to COORDINATOR_URL (default http://localhost:8080; set to the svc DNS in k8s) via
+    global fetch; ERROR applicationMetric + 502 on upstream failure.
+  - public/app.js: initial paint = GET /api/state (no create-on-load); "Refresh / Total" button
+    re-reads full state; summary now shows in-flight + lifetime-added.
+  - NEW Dockerfile (repo root) builds the frontend image; tsc emits via `--outDir dist` because
+    tsconfig has no outDir (typecheck-only). NEW backend/deploy/k8s/frontend.yaml (Deployment +
+    NodePort 30030, env COORDINATOR_URL=http://cohort-coordinator-http:8080).
+GOTCHA:
+  - `tsc` emitted .js in-place (tsconfig lost its outDir during earlier edits) -> build COPY of
+    /app/dist failed. Fixed by `tsc --outDir dist` in the Dockerfile; cleaned stray src/*.js.
+METRICS:
+  serviceMetric (frontend): api.proxy.<op>.latency_ms.
+  applicationMetric (frontend): ERROR when the coordinator is unreachable (-> 502), no silent catch.
+NEXT:
+  - Optional: a `cohort-frontend:v1.0.0` Makefile target; bump tags instead of reusing v1.0.0;
+    scale workers to show throughput; wire app.js auto-refresh/poll for live drain animation.
+
+---
+
 [2026-06-02 14:15] | Built Go `backend/`: coordinator (HTTP 4 APIs + gRPC) + worker (gRPC consume), mutex queue, lease/visibility-timeout, checkpoint recovery, cumulative added-counter, two v1.0.0 images.
 VERIFIED:
   cd backend

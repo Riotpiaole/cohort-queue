@@ -1,0 +1,46 @@
+# Frontend (Express): serves the visualization and reverse-proxies /api/* to the
+# coordinator IN-CLUSTER via service DNS — so no host port-forward is needed.
+# Browser reaches it through the NodePort (minikube service cohort-frontend --url).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cohort-frontend
+  labels: { app: cohort-frontend }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cohort-frontend }
+  template:
+    metadata:
+      labels: { app: cohort-frontend }
+    spec:
+      containers:
+        - name: frontend
+          image: cohort-frontend:v1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PORT
+              value: "3000"
+            # In-cluster coordinator HTTP service (ClusterIP of the NodePort svc).
+            - name: COORDINATOR_URL
+              value: http://cohort-coordinator-http:8080
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 2
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 250m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cohort-frontend
+  labels: { app: cohort-frontend }
+spec:
+  # NodePort: open the UI from the host via `minikube service cohort-frontend --url`.
+  type: NodePort
+  selector: { app: cohort-frontend }
+  ports:
+    - { name: http, port: 3000, targetPort: http, nodePort: 30030 }

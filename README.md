@@ -53,3 +53,11 @@ Following the same context of the problem, Make a folder backend which have 4 AP
 - There should exists two images to be built in version v1.0.0 and dockerize for k8s demo purpose
 
 ```
+
+## Integration (Put everything together)
+
+- Now you can simply write a prompt to generate frontend calls
+
+```
+Now integrate the frontend with the coordinator service using localhost.
+```

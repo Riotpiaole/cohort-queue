@@ -66,21 +66,33 @@ function render(state) {
 }
 
 function renderSummary(state) {
-  const total = state.cohorts.reduce((sum, c) => sum + c, 0);
+  const total = state.total ?? state.cohorts.reduce((sum, c) => sum + c, 0);
   const arr = "[" + state.cohorts.join(", ") + "]";
-  summary.innerHTML = `${arr} · cohorts: <strong>${state.cohorts.length}</strong> · total waiting: <strong>${total}</strong> · capacity: ${state.capacity}`;
+  let html = `${arr} · cohorts: <strong>${state.cohorts.length}</strong> · total waiting: <strong>${total}</strong> · capacity: ${state.capacity}`;
+  // Real-backend signals (absent in the old static demo).
+  if (typeof state.inFlight === "number") {
+    html += ` · in-flight: <strong>${state.inFlight}</strong>`;
+  }
+  if (typeof state.totalAdded === "number") {
+    html += ` · lifetime added: <strong>${state.totalAdded}</strong>`;
+  }
+  summary.innerHTML = html;
 }
 
 async function call(op) {
+  // "Total" is a live refresh: re-read the full state (viz + summary), since the
+  // k8s workers drain the queue asynchronously.
+  if (op === "total") {
+    return loadState();
+  }
+
   errorEl.textContent = "";
   try {
     let res;
     if (op === "create") {
       res = await fetch("/api/create", postJson({ capacity: numOrUndef(capacityInput.value) }));
-    } else if (op === "add" || op === "take") {
-      res = await fetch(`/api/${op}`, postJson({ n: numOrUndef(nInput.value) }));
     } else {
-      res = await fetch("/api/total");
+      res = await fetch(`/api/${op}`, postJson({ n: numOrUndef(nInput.value) }));
     }
 
     const data = await res.json();
@@ -88,15 +100,10 @@ async function call(op) {
       errorEl.textContent = data.error || `Request failed (${res.status}).`;
       return;
     }
-
-    if (op === "total") {
-      summary.innerHTML = `total waiting: <strong>${data.total}</strong>`;
-      return;
-    }
     render(data);
     renderSummary(data);
   } catch (err) {
-    errorEl.textContent = "Network error — is the server running?";
+    errorEl.textContent = "Network error — is the backend running?";
     console.error(err);
   }
 }
@@ -114,13 +121,27 @@ function numOrUndef(value) {
   return value === "" || Number.isNaN(n) ? undefined : n;
 }
 
+/** Non-destructive load of the live queue (used on page load / refresh). */
+async function loadState() {
+  errorEl.textContent = "";
+  try {
+    const res = await fetch("/api/state");
+    const data = await res.json();
+    if (!res.ok) {
+      errorEl.textContent = data.error || `Request failed (${res.status}).`;
+      return;
+    }
+    render(data);
+    renderSummary(data);
+  } catch (err) {
+    errorEl.textContent = "Network error — is the backend running?";
+    console.error(err);
+  }
+}
+
 document.querySelectorAll("button[data-op]").forEach((btn) => {
   btn.addEventListener("click", () => call(btn.dataset.op));
 });
 
-// Initial paint: show current state.
-fetch("/api/total")
-  .then(() => call("create"))
-  .catch(() => {
-    errorEl.textContent = "Network error — is the server running?";
-  });
+// Initial paint: read the live queue WITHOUT mutating it (no create-on-load).
+loadState();

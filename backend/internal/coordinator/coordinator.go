@@ -173,6 +173,7 @@ func (c *Coordinator) routes() http.Handler {
 	mux.HandleFunc("/api/add", c.handleAdd)
 	mux.HandleFunc("/api/take", c.handleTake)
 	mux.HandleFunc("/api/total", c.handleTotal)
+	mux.HandleFunc("/api/state", c.handleState)
 	return withCORS(mux)
 }
 
@@ -227,6 +228,13 @@ func (c *Coordinator) handleTake(w http.ResponseWriter, r *http.Request) {
 func (c *Coordinator) handleTotal(w http.ResponseWriter, _ *http.Request) {
 	defer metrics.Latency("api.total.latency_ms", time.Now())
 	writeJSON(w, http.StatusOK, map[string]int{"total": c.q.Total()})
+}
+
+// handleState is a read-only snapshot for the frontend's initial paint/refresh —
+// it does NOT mutate the queue (unlike create).
+func (c *Coordinator) handleState(w http.ResponseWriter, _ *http.Request) {
+	defer metrics.Latency("api.state.latency_ms", time.Now())
+	c.writeState(w)
 }
 
 func (c *Coordinator) writeState(w http.ResponseWriter) {
