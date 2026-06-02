@@ -1,0 +1,118 @@
+:root {
+  --bg: #0f1220;
+  --panel: #1a1f35;
+  --ink: #e8ecf6;
+  --muted: #8d97b5;
+  --cell: #2b6cff;
+  --cell-partial: #f0a020;
+  --cell-serve: #28c08a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+.subtitle { margin: 0 0 1.5rem; color: var(--muted); }
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--panel);
+  border-radius: 12px;
+}
+.control { display: flex; align-items: center; gap: 0.5rem; }
+.control label { color: var(--muted); font-size: 0.85rem; }
+
+input[type="number"] {
+  width: 4.5rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #2f3654;
+  border-radius: 8px;
+  background: #0c0f1c;
+  color: var(--ink);
+}
+
+button {
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--cell);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.1); }
+button:active { transform: translateY(1px); }
+#btn-take { background: var(--cell-serve); }
+#btn-create { background: #5b647f; }
+#btn-total { background: #7a52ff; }
+
+.stage {
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+  margin: 2rem 0 1rem;
+}
+.end-label {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.viz {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 90px;
+  padding: 1rem;
+  background: var(--panel);
+  border-radius: 12px;
+}
+
+.cohort {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 34px;
+  border-radius: 6px 6px 4px 4px;
+  background: linear-gradient(180deg, var(--cell), #1c4fd0);
+  color: white;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding-bottom: 4px;
+  /* height scales with creator count; set inline per cell */
+}
+.cohort--partial { background: linear-gradient(180deg, var(--cell-partial), #c47a0a); }
+.cohort--serve { outline: 2px solid var(--cell-serve); outline-offset: 2px; }
+
+.ellipsis {
+  align-self: center;
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 0 0.25rem;
+}
+
+.empty-note { color: var(--muted); font-style: italic; align-self: center; }
+
+.summary { font-size: 1.05rem; }
+.summary strong { color: var(--cell-serve); }
+.error { color: #ff6b6b; min-height: 1.2em; }

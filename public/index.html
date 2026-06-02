@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cohort Waiting List — Demo</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Cohort Waiting List</h1>
+      <p class="subtitle">
+        Static visualization demo. Newest cohorts on the <strong>left</strong>, oldest on the
+        <strong>right</strong> — creators are served from the right (FIFO).
+      </p>
+
+      <section class="controls">
+        <div class="control">
+          <label for="capacity">capacity</label>
+          <input id="capacity" type="number" min="1" value="10" />
+          <button id="btn-create" data-op="create">Create</button>
+        </div>
+        <div class="control">
+          <label for="n">n</label>
+          <input id="n" type="number" min="0" value="13" />
+          <button id="btn-add" data-op="add">Add</button>
+          <button id="btn-take" data-op="take">Take</button>
+        </div>
+        <div class="control">
+          <button id="btn-total" data-op="total">Total</button>
+        </div>
+      </section>
+
+      <section class="stage">
+        <span class="end-label end-label--newest">newest&nbsp;↤</span>
+        <div id="viz" class="viz" aria-live="polite"></div>
+        <span class="end-label end-label--oldest">↦&nbsp;oldest (served next)</span>
+      </section>
+
+      <p id="summary" class="summary"></p>
+      <p id="error" class="error" role="alert"></p>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
