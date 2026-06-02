@@ -7,6 +7,11 @@
     - And ask `claude code` to load it up. 
     - And read the `PROBLEMS.md` in the memory and compact it.
 
+> NOTE, you can read LOGS.md for the working session of claude code and testable approach for the state of the project.
+
+
+## Frontend visualization 
+
 - From the problem, i can summarized the problem is designing SQS. Where each entry is represent a queue with collection of creator (product) waitting to be consume. 
 
 - From there i need to figured out the way we can complete the problem. I will ask AI to implement me an Express JS app where leverage static value for representation in plan mode.
@@ -19,3 +24,32 @@ Can u build me an ExpressJS App where staticly interact and represent it ?
   - The state of the system should make it into a static version just for demo purpose. 
 ```
 
+## Backend setup 
+
+- We need to figure out How do we setup the backend in terms of scaling. 
+    - We can scale the numbers of ops work to pull down the cohort group to consume. (Scalability)
+    - We can concurrently scale the numbers of ops worker pulling. (Latency)
+    - We an scale the size of the cohort to hold more creator in one of the entry 
+
+- So each time a frontend call `Pull` should be processed by a pool of process and handle by a mutex to avoid dirty write.
+
+- For the cohort seems like a storage representation of bucket for holding creator. The bucket can considered as a permanent storage with `N` size. And changing it can rethink scale the storage space or volume to bigger size.
+  - Of course there exists migration of the bucket can be  (old bucket down or up size) a new topic to discuss. But in this we assume we always refresh a new queue when New is called.
+  - Due to the limit of time, I assume we use a simple fifo queue sitting at the backend for coordination of the work.
+
+- Now I can refine a new prompt for claude code to work on 
+
+```
+Following the same context of the problem, Make a folder backend which have 4 APIs specified using golang.
+
+- The service can support two mode, one is coordinator (backend intergate with frontend) and worker (where communicate with backend for pull and consumes the message)
+
+- The worker and coordinator are communicate with gRPC with two call `PullTask` and `TaskComplete`.
+
+- The coordinator should have in memory static queue which protected with mutex for modification. 
+
+- The failure recovery should be handled as a checkpointing with local storage in `{WORKSPACE_FOLDER}/checkpt` 
+
+- There should exists two images to be built in version v1.0.0 and dockerize for k8s demo purpose
+
+```
