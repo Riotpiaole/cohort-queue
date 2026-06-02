@@ -24,7 +24,7 @@ spec:
             - --coordinator-addr=cohort-coordinator:9090
             - --workers=2
             - --process-time=500ms
-            - --idle-backoff=1s
+            - --error-backoff=1s
           resources:
             requests: { cpu: 25m, memory: 32Mi }
             limits: { cpu: 250m, memory: 128Mi }

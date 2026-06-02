@@ -61,3 +61,14 @@ Following the same context of the problem, Make a folder backend which have 4 AP
 ```
 Now integrate the frontend with the coordinator service using localhost.
 ```
+
+
+## Test and Iteration 
+
+- When i am doing a manual test, i found the Add would randomly delete all the entry within the queue. I notice the direction of the trigger should changed from worker pulling from the queue into user click submit a job and worker pull from the job queue which consume an entry within coordinator fifo queue.
+
+- I basically write the issue to AI, and ask him to write me a plan. 
+
+```
+I think i got the wrong idea, worker should pull from the queue upon the user submitted a request. We should add a addition buffer between the worker and coordinator. So the user click pull or add, it should be a queue parse up the message and distribute to the coordinator for consumption.
+```

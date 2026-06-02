@@ -76,6 +76,9 @@ function renderSummary(state) {
   if (typeof state.totalAdded === "number") {
     html += ` · lifetime added: <strong>${state.totalAdded}</strong>`;
   }
+  if (typeof state.pendingPulls === "number") {
+    html += ` · pending pulls: <strong>${state.pendingPulls}</strong>`;
+  }
   summary.innerHTML = html;
 }
 

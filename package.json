@@ -7,7 +7,13 @@
   "scripts": {
     "dev": "npx tsx watch src/server.ts",
     "start": "npx tsx src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "up": "make up",
+    "open": "make open",
+    "url": "make url",
+    "status": "make status",
+    "logs": "make logs",
+    "down": "make down"
   },
   "dependencies": {
     "express": "^4.19.2"

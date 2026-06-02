@@ -37,8 +37,8 @@ func main() {
 		// worker flags
 		coordAddr   = flag.String("coordinator-addr", "localhost:9090", "worker: coordinator gRPC address")
 		workers     = flag.Int("workers", 1, "worker: number of concurrent pull loops")
-		processTime = flag.Duration("process-time", 500*time.Millisecond, "worker: simulated per-cohort processing time")
-		idleBackoff = flag.Duration("idle-backoff", 500*time.Millisecond, "worker: base backoff when the queue is empty")
+		processTime  = flag.Duration("process-time", 500*time.Millisecond, "worker: simulated per-cohort processing time")
+		errorBackoff = flag.Duration("error-backoff", 1*time.Second, "worker: wait before retrying after a connection error")
 	)
 	flag.Parse()
 
@@ -62,7 +62,7 @@ func main() {
 			CoordinatorAddr: *coordAddr,
 			Workers:         *workers,
 			ProcessTime:     *processTime,
-			IdleBackoff:     *idleBackoff,
+			ErrorBackoff:    *errorBackoff,
 		})
 	default:
 		metrics.App(metrics.ERROR, "unknown --mode="+*mode+" (want coordinator|worker)", nil)

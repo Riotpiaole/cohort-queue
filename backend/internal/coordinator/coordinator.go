@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	cohortv1 "github.com/elective/cohort-backend/gen/cohort/v1"
@@ -18,6 +19,10 @@ import (
 	"github.com/elective/cohort-backend/internal/queue"
 	"google.golang.org/grpc"
 )
+
+// defaultMaxBuffer bounds the pull-request buffer so a flood of /api/pull calls
+// can't grow memory without limit.
+const defaultMaxBuffer = 1000
 
 // Config holds coordinator runtime settings.
 type Config struct {
@@ -30,19 +35,31 @@ type Config struct {
 }
 
 // Coordinator wires the queue, checkpoint store, and gRPC service together.
+//
+// The pull buffer makes consumption demand-driven: workers block in PullTask until
+// a user-requested pull is buffered AND a cohort exists. mu/cond guard the buffer;
+// lock order is always mu -> queue.mu (PullTask nests them; Add/reap take queue.mu
+// then mu separately).
 type Coordinator struct {
 	cohortv1.UnimplementedCoordinatorServer
 	q     *queue.Queue
 	store *checkpoint.Store
 	ttl   time.Duration
+
+	mu           sync.Mutex
+	cond         *sync.Cond // signalled when pendingPulls or cohort-availability changes
+	pendingPulls int        // buffered pull-requests awaiting a worker + cohort
+	maxBuffer    int
+	closing      bool // set on shutdown so blocked PullTasks return
 }
 
 type stateResponse struct {
-	Capacity   int    `json:"capacity"`
-	Cohorts    []int  `json:"cohorts"`
-	InFlight   int    `json:"inFlight"`
-	Total      int    `json:"total"`
-	TotalAdded uint64 `json:"totalAdded"` // lifetime creators ever added
+	Capacity     int    `json:"capacity"`
+	Cohorts      []int  `json:"cohorts"`
+	InFlight     int    `json:"inFlight"`
+	Total        int    `json:"total"`
+	TotalAdded   uint64 `json:"totalAdded"`   // lifetime creators ever added
+	PendingPulls int    `json:"pendingPulls"` // buffered pull-requests
 }
 
 type apiError struct {
@@ -58,17 +75,21 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	q := queue.New(cfg.Capacity)
+	restoredPulls := 0
 	if state, ok, lerr := store.Load(); lerr != nil {
 		// Corrupt/unreadable checkpoint: start fresh rather than crash-loop.
 		metrics.App(metrics.ERROR, "checkpoint load failed; starting fresh", lerr)
 	} else if ok {
 		q.Restore(state)
+		restoredPulls = state.PendingPulls
 		metrics.App(metrics.INFO, "recovered from checkpoint "+store.Path(), nil)
 		metrics.Service("queue.depth", q.Depth(), "cohorts")
 		metrics.Service("queue.inflight", q.InFlight(), "creators")
+		metrics.Service("pull.buffer.depth", restoredPulls, "requests")
 	}
 
-	c := &Coordinator{q: q, store: store, ttl: cfg.LeaseTTL}
+	c := &Coordinator{q: q, store: store, ttl: cfg.LeaseTTL, maxBuffer: defaultMaxBuffer, pendingPulls: restoredPulls}
+	c.cond = sync.NewCond(&c.mu)
 
 	// gRPC server.
 	grpcServer := grpc.NewServer()
@@ -98,11 +119,36 @@ func Run(ctx context.Context, cfg Config) error {
 
 	<-ctx.Done()
 	metrics.App(metrics.INFO, "shutting down coordinator", nil)
+	// Wake any blocked PullTask handlers so GracefulStop doesn't hang on them.
+	c.mu.Lock()
+	c.closing = true
+	c.cond.Broadcast()
+	c.mu.Unlock()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
 	grpcServer.GracefulStop()
 	return nil
+}
+
+// wakeAll signals all waiters that the buffer or cohort-availability changed.
+func (c *Coordinator) wakeAll() {
+	c.mu.Lock()
+	c.cond.Broadcast()
+	c.mu.Unlock()
+}
+
+// enqueuePull buffers one pull-request. Returns the new depth, or ok=false if the
+// buffer is full.
+func (c *Coordinator) enqueuePull() (depth int, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pendingPulls >= c.maxBuffer {
+		return c.pendingPulls, false
+	}
+	c.pendingPulls++
+	c.cond.Broadcast()
+	return c.pendingPulls, true
 }
 
 func (c *Coordinator) reapLoop(ctx context.Context, every time.Duration) {
@@ -115,19 +161,26 @@ func (c *Coordinator) reapLoop(ctx context.Context, every time.Duration) {
 		case <-ticker.C:
 			if n := c.q.ReapExpired(time.Now()); n > 0 {
 				metrics.App(metrics.WARN, "reclaimed expired lease(s) count="+itoa(n), nil)
+				c.wakeAll() // reclaimed cohorts may satisfy a blocked pull
 				c.persist("reap")
 			}
 		}
 	}
 }
 
-// persist snapshots the queue (under the queue's own lock) and writes the
-// checkpoint outside any lock. Also emits queue gauges.
+// persist snapshots the queue + pull buffer and writes the checkpoint outside any
+// lock. Also emits queue gauges. pendingPulls is read under mu, then folded into
+// the queue snapshot so the buffer survives a restart.
 func (c *Coordinator) persist(op string) {
 	metrics.Service("queue.depth", c.q.Depth(), "cohorts")
 	metrics.Service("queue.inflight", c.q.InFlight(), "creators")
+	c.mu.Lock()
+	pending := c.pendingPulls
+	c.mu.Unlock()
+	s := c.q.Snapshot()
+	s.PendingPulls = pending
 	start := time.Now()
-	if err := c.store.Save(c.q.Snapshot()); err != nil {
+	if err := c.store.Save(s); err != nil {
 		// Graceful degradation: keep serving from memory, surface the failure.
 		metrics.App(metrics.ERROR, "checkpoint save failed after "+op, err)
 		return
@@ -137,20 +190,48 @@ func (c *Coordinator) persist(op string) {
 
 // ---- gRPC consume API ----
 
-// PullTask leases the oldest available cohort to the worker.
-func (c *Coordinator) PullTask(_ context.Context, req *cohortv1.PullTaskRequest) (*cohortv1.PullTaskResponse, error) {
+// PullTask blocks (long-poll) until a user-requested pull is buffered AND a cohort
+// is available, then leases the oldest cohort. Returns has_task=false only on
+// shutdown or worker/client disconnect — so an idle worker simply waits instead of
+// busy-polling. Consumption is therefore demand-driven by /api/pull.
+func (c *Coordinator) PullTask(ctx context.Context, req *cohortv1.PullTaskRequest) (*cohortv1.PullTaskResponse, error) {
 	defer metrics.Latency("grpc.pulltask.latency_ms", time.Now())
-	cohort, deadline, ok := c.q.Lease(req.GetWorkerId(), time.Now(), c.ttl)
-	if !ok {
-		return &cohortv1.PullTaskResponse{HasTask: false}, nil
+
+	// Wake this waiter if the worker/client disconnects mid-wait.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.wakeAll()
+		case <-stop:
+		}
+	}()
+
+	c.mu.Lock()
+	for {
+		if c.closing || ctx.Err() != nil {
+			c.mu.Unlock()
+			return &cohortv1.PullTaskResponse{HasTask: false}, nil
+		}
+		if c.pendingPulls > 0 {
+			// A pull is requested; try to satisfy it with the oldest cohort.
+			cohort, deadline, ok := c.q.Lease(req.GetWorkerId(), time.Now(), c.ttl)
+			if ok {
+				c.pendingPulls-- // token consumed only on a real lease
+				c.mu.Unlock()
+				c.persist("pull")
+				return &cohortv1.PullTaskResponse{
+					HasTask:           true,
+					CohortId:          cohort.ID,
+					Count:             int32(cohort.Count),
+					LeaseDeadlineUnix: deadline.Unix(),
+				}, nil
+			}
+			// Pull requested but no cohort yet — wait for an Add/reap.
+		}
+		c.cond.Wait() // releases mu; woken by enqueuePull/wakeAll/disconnect/shutdown
 	}
-	c.persist("pull")
-	return &cohortv1.PullTaskResponse{
-		HasTask:           true,
-		CohortId:          cohort.ID,
-		Count:             int32(cohort.Count),
-		LeaseDeadlineUnix: deadline.Unix(),
-	}, nil
 }
 
 // TaskComplete confirms a leased cohort was consumed and removes it.
@@ -172,6 +253,7 @@ func (c *Coordinator) routes() http.Handler {
 	mux.HandleFunc("/api/create", c.handleCreate)
 	mux.HandleFunc("/api/add", c.handleAdd)
 	mux.HandleFunc("/api/take", c.handleTake)
+	mux.HandleFunc("/api/pull", c.handlePull)
 	mux.HandleFunc("/api/total", c.handleTotal)
 	mux.HandleFunc("/api/state", c.handleState)
 	return withCORS(mux)
@@ -194,6 +276,11 @@ func (c *Coordinator) handleCreate(w http.ResponseWriter, r *http.Request) {
 		capacity = *body.Capacity
 	}
 	c.q.Create(capacity)
+	// A fresh queue clears any buffered pulls too.
+	c.mu.Lock()
+	c.pendingPulls = 0
+	c.cond.Broadcast()
+	c.mu.Unlock()
 	c.persist("create")
 	c.writeState(w)
 }
@@ -205,6 +292,7 @@ func (c *Coordinator) handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.q.Add(n)
+	c.wakeAll() // new cohorts may satisfy a blocked pull
 	// The cumulative added-count is a first-class KPI: emit how many came in this
 	// call and the new lifetime total.
 	metrics.Service("api.add.count", n, "creators")
@@ -225,6 +313,22 @@ func (c *Coordinator) handleTake(w http.ResponseWriter, r *http.Request) {
 	c.writeState(w)
 }
 
+// handlePull buffers one demand-driven pull-request. A blocked worker will consume
+// it against the oldest cohort. Consumption is async, so we return the current
+// state (with the new pendingPulls); the caller refreshes to see the cohort leave.
+func (c *Coordinator) handlePull(w http.ResponseWriter, _ *http.Request) {
+	defer metrics.Latency("api.pull.latency_ms", time.Now())
+	depth, ok := c.enqueuePull()
+	if !ok {
+		metrics.App(metrics.WARN, "pull buffer full (max="+itoa(c.maxBuffer)+")", nil)
+		fail(w, http.StatusTooManyRequests, "pull buffer is full")
+		return
+	}
+	metrics.Service("pull.buffer.depth", depth, "requests")
+	c.persist("pull-request")
+	c.writeState(w)
+}
+
 func (c *Coordinator) handleTotal(w http.ResponseWriter, _ *http.Request) {
 	defer metrics.Latency("api.total.latency_ms", time.Now())
 	writeJSON(w, http.StatusOK, map[string]int{"total": c.q.Total()})
@@ -238,12 +342,16 @@ func (c *Coordinator) handleState(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (c *Coordinator) writeState(w http.ResponseWriter) {
+	c.mu.Lock()
+	pending := c.pendingPulls
+	c.mu.Unlock()
 	writeJSON(w, http.StatusOK, stateResponse{
-		Capacity:   c.q.Capacity(),
-		Cohorts:    c.q.Counts(),
-		InFlight:   c.q.InFlight(),
-		Total:      c.q.Total(),
-		TotalAdded: c.q.TotalAdded(),
+		Capacity:     c.q.Capacity(),
+		Cohorts:      c.q.Counts(),
+		InFlight:     c.q.InFlight(),
+		Total:        c.q.Total(),
+		TotalAdded:   c.q.TotalAdded(),
+		PendingPulls: pending,
 	})
 }
 

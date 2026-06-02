@@ -37,6 +37,10 @@ type State struct {
 	Cohorts    []Cohort `json:"cohorts"`
 	Leases     []Lease  `json:"leases"`
 	TotalAdded uint64   `json:"totalAdded"` // lifetime creators ever added
+	// PendingPulls is the coordinator's pull-request buffer depth. The queue does
+	// not manage it, but it lives here because State is the on-disk checkpoint
+	// format and the buffer must survive a coordinator restart.
+	PendingPulls int `json:"pendingPulls"`
 }
 
 // Queue is the cohort waiting list. All methods are safe for concurrent use.
