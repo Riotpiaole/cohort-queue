@@ -1,5 +1,77 @@
 # Elective Take Home (Cohort)
 
+A small **cohort waiting-list** system, modelled as an SQS-style queue: creators
+(each represented by the number `1`) wait in fixed-capacity **cohorts** (FIFO,
+newest on the left, oldest served first), and **ops workers** consume the oldest
+cohort on demand.
+
+### Stack
+- **Frontend** — Express + TypeScript. A web UI that visualizes the queue as an
+  array of cohort counts (e.g. `[8, 10, 10, 6]`), collapsing the middle past 20
+  cohorts.
+- **Backend** (`backend/`) — Go, one binary with two modes:
+  - **coordinator** — owns the mutex-protected FIFO queue; serves the HTTP API
+    (`create` / `add` / `take` / `pull` / `total` / `state`) for the frontend and a
+    gRPC API (`PullTask` / `TaskComplete`) for workers; checkpoints state to
+    `{WORKSPACE_FOLDER}/checkpt` for crash recovery.
+  - **worker** — blocks on gRPC until a user **Pull** is requested, then consumes
+    one (oldest) cohort. Consumption is **demand-driven**, not auto-draining.
+- **Deploy** — three `v1.0.0` images on **minikube** (coordinator, worker,
+  frontend), wired together in-cluster; the frontend reverse-proxies `/api/*` to
+  the coordinator.
+
+See [`PROBLEMS.md`](PROBLEMS.md) for the original spec and [`LOG.md`](LOG.md) for
+the per-session work log and exact verification commands.
+
+## Getting Started
+
+### Prerequisites
+Node 20+, Go 1.23+, Docker, `make`, `minikube`, and `kubectl`.
+
+> **Docker must be running before you start.** minikube uses the docker driver, so
+> start Docker Desktop (or your Docker daemon) first — `docker info` should succeed.
+> `npm run up` will start minikube for you, but it cannot start Docker.
+
+### Run the whole stack on minikube — one command
+```bash
+npm install
+npm run up        # build all 3 images, start/use minikube, deploy, then open the UI
+```
+(If minikube isn't running yet, `npm run up` starts it with `--driver=docker`.)
+`npm run up` opens the frontend in your browser and holds a tunnel (Ctrl-C to
+stop). Other helpers (all `npm run` wrappers around the root `Makefile`):
+
+| Command | Does |
+|---|---|
+| `npm run up`     | cluster → build images → deploy → open the UI |
+| `npm run open`   | re-open the frontend in the browser |
+| `npm run url`    | print the frontend URL |
+| `npm run status` | show deployments / pods / services |
+| `npm run logs`   | tail coordinator + worker logs |
+| `npm run down`   | remove the workloads |
+
+### Using the UI
+- **Add** — fills cohorts (newest on the left).
+- **Pull (worker)** — asks a worker to consume the oldest cohort (one per click).
+- **Take (admin)** — serves creators directly from the coordinator.
+- **Refresh / Total** — re-reads the live state (in-flight + lifetime-added shown too).
+
+### Frontend-only dev (no k8s)
+Serve the Express frontend on `:3000`, proxying `/api/*` to a coordinator at
+`$COORDINATOR_URL` (default `http://localhost:8080`):
+```bash
+npm run dev
+# in another shell, run a coordinator locally:
+cd backend && WORKSPACE_FOLDER=$PWD go run ./cmd/cohort --mode=coordinator
+```
+Backend tests: `cd backend && go test ./...`.
+
+---
+
+## Build journal
+
+> The sections below capture how the project was built, prompt by prompt.
+
 - First, i will interact with the AI to understand the problem
     - This include understand the core concept of the cohort and what does the number is representing. 
 - And i will load up my own SoftwareDev prompt to work withe the AI. 
