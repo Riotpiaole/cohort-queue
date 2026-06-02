@@ -1,0 +1,5 @@
+bin/
+checkpt/
+*.log
+deploy/
+Makefile

@@ -1,0 +1,15 @@
+version: v2
+# Generated code is written next to the module under gen/ and committed, so the
+# build works without re-running codegen. Plugins are the locally-installed
+# protoc-gen-go / protoc-gen-go-grpc (on $GOPATH/bin); buf compiles the proto
+# itself (no system protoc needed).
+clean: true
+plugins:
+  - local: protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative
+inputs:
+  - directory: proto

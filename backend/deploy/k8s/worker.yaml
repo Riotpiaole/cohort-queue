@@ -1,0 +1,30 @@
+# Workers: the ops pool that pulls and consumes cohorts over gRPC. Scale this
+# Deployment to demonstrate the README's levers:
+#   kubectl scale deploy/cohort-worker --replicas=5     # more pods   (scalability)
+#   --workers=N below                                   # more loops/pod (latency)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cohort-worker
+  labels: { app: cohort-worker }
+spec:
+  replicas: 1 # start with a single worker; scale up to demo the scalability lever
+  selector:
+    matchLabels: { app: cohort-worker }
+  template:
+    metadata:
+      labels: { app: cohort-worker }
+    spec:
+      containers:
+        - name: worker
+          image: cohort-worker:v1.0.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=worker
+            - --coordinator-addr=cohort-coordinator:9090
+            - --workers=2
+            - --process-time=500ms
+            - --idle-backoff=1s
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { cpu: 250m, memory: 128Mi }

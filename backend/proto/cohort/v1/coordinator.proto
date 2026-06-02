@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package cohort.v1;
+
+option go_package = "github.com/elective/cohort-backend/gen/cohort/v1;cohortv1";
+
+// Coordinator is the worker-facing API. Workers (ops) pull cohorts to consume and
+// report completion. The cohort waiting list itself is managed over HTTP by the
+// coordinator; this gRPC surface is purely the consume path.
+service Coordinator {
+  // PullTask leases the oldest available cohort to the calling worker. If the
+  // queue is empty, has_task is false. The lease must be confirmed via
+  // TaskComplete before lease_deadline_unix, or the cohort returns to the queue.
+  rpc PullTask(PullTaskRequest) returns (PullTaskResponse);
+
+  // TaskComplete confirms a leased cohort was consumed and removes it for good.
+  // Idempotent: completing an unknown/expired lease returns ok=false, not an error.
+  rpc TaskComplete(TaskCompleteRequest) returns (TaskCompleteResponse);
+}
+
+message PullTaskRequest {
+  string worker_id = 1;
+}
+
+message PullTaskResponse {
+  bool has_task = 1;
+  string cohort_id = 2;
+  int32 count = 3;              // number of creators in the leased cohort
+  int64 lease_deadline_unix = 4; // unix seconds; lease expires after this
+}
+
+message TaskCompleteRequest {
+  string worker_id = 1;
+  string cohort_id = 2;
+}
+
+message TaskCompleteResponse {
+  bool ok = 1; // false if the lease was unknown/expired/owned by another worker
+}

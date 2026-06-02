@@ -1,0 +1,82 @@
+# Coordinator: owns the queue, serves HTTP (frontend) + gRPC (workers), and
+# checkpoints to a PersistentVolume so state survives a pod restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cohort-checkpt
+  labels: { app: cohort-coordinator }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 128Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cohort-coordinator
+  labels: { app: cohort-coordinator }
+spec:
+  replicas: 1 # single owner of the in-memory queue (HA is out of scope)
+  strategy: { type: Recreate } # never two coordinators writing one PVC
+  selector:
+    matchLabels: { app: cohort-coordinator }
+  template:
+    metadata:
+      labels: { app: cohort-coordinator }
+    spec:
+      securityContext:
+        fsGroup: 65532 # distroless 'nonroot' gid, so the pod can write the PVC
+      containers:
+        - name: coordinator
+          image: cohort-coordinator:v1.0.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=coordinator
+            - --http-addr=:8080
+            - --grpc-addr=:9090
+            - --lease-ttl=30s
+            - --reap-every=5s
+          env:
+            - name: WORKSPACE_FOLDER
+              value: /workspace
+          ports:
+            - { name: http, containerPort: 8080 }
+            - { name: grpc, containerPort: 9090 }
+          readinessProbe:
+            tcpSocket: { port: 9090 }
+            initialDelaySeconds: 2
+          volumeMounts:
+            - { name: checkpt, mountPath: /workspace }
+      volumes:
+        - name: checkpt
+          persistentVolumeClaim:
+            claimName: cohort-checkpt
+---
+# gRPC service: in-cluster only. Workers dial the stable DNS name
+# cohort-coordinator:9090 — this never needs external exposure.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cohort-coordinator
+  labels: { app: cohort-coordinator }
+spec:
+  type: ClusterIP
+  selector: { app: cohort-coordinator }
+  ports:
+    - { name: grpc, port: 9090, targetPort: grpc }
+---
+# HTTP service: exposed to the host via NodePort so the frontend / curl can reach
+# the 4 APIs directly — no `kubectl port-forward` needed.
+#   URL:  minikube service cohort-coordinator-http --url
+#   or:   http://$(minikube ip):30080/api/total
+apiVersion: v1
+kind: Service
+metadata:
+  name: cohort-coordinator-http
+  labels: { app: cohort-coordinator }
+spec:
+  type: NodePort
+  selector: { app: cohort-coordinator }
+  ports:
+    - { name: http, port: 8080, targetPort: http, nodePort: 30080 }
